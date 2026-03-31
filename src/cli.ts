@@ -6,6 +6,9 @@ import { renderMermaid } from "./render.js"
 import { svgToPng } from "./export-png.js"
 import { pngToPdf } from "./export-pdf.js"
 
+const ANIMATED_EXTS = new Set([".gif", ".mp4", ".webm"])
+const STATIC_EXTS = new Set([".svg", ".png", ".pdf"])
+
 const render = defineCommand({
   meta: { name: "render", description: "Render a Mermaid diagram" },
   args: {
@@ -16,6 +19,13 @@ const render = defineCommand({
     backgroundColor: { type: "string", alias: "bg", description: "Background color" },
     width: { type: "string", alias: "w", description: "SVG width override" },
     quiet: { type: "boolean", alias: "q", description: "Suppress output", default: false },
+    animate: {
+      type: "string",
+      alias: "a",
+      description: 'Animation mode: "none", "reveal", "flow" (default: auto from output format)',
+    },
+    fps: { type: "string", description: "Animation frames per second", default: "30" },
+    duration: { type: "string", description: "Animation duration in seconds (overrides auto-calculation)" },
   },
   async run({ args }) {
     const start = performance.now()
@@ -41,12 +51,75 @@ const render = defineCommand({
     const theme = args.theme as "default" | "dark" | "forest" | "neutral"
     const scale = parseFloat(args.scale)
     const width = args.width ? parseInt(args.width) : undefined
+    const fps = parseInt(args.fps)
+    const durationOverride = args.duration ? parseFloat(args.duration) : undefined
 
-    // Render to SVG
-    const svg = await renderMermaid(source, { theme, width, backgroundColor: args.backgroundColor })
-
-    // Determine output format from extension
     const ext = extname(args.output).toLowerCase()
+
+    // Determine animation mode
+    let animate = args.animate as string | undefined
+    if (!animate) {
+      // Auto-detect: animated formats default to "reveal", static default to "none"
+      if (ANIMATED_EXTS.has(ext)) {
+        animate = "reveal"
+      } else {
+        animate = "none"
+      }
+    }
+
+    // Validate: GIF/MP4 require animation
+    if (ANIMATED_EXTS.has(ext) && animate === "none") {
+      console.error(
+        `Error: ${ext} output requires animation. Use --animate reveal or --animate flow.`,
+      )
+      process.exit(1)
+    }
+
+    // Validate: static formats don't support animation
+    if (STATIC_EXTS.has(ext) && animate !== "none") {
+      console.error(
+        `Error: ${ext} output does not support animation. Use .gif or .mp4 for animated output.`,
+      )
+      process.exit(1)
+    }
+
+    // ─── Animated output path ───
+    if (animate !== "none" && ANIMATED_EXTS.has(ext)) {
+      // Dynamic import to avoid loading Remotion for static renders
+      let renderAnimation: typeof import("./animation/render-animation.js").renderAnimation
+      try {
+        const mod = await import("./animation/render-animation.js")
+        renderAnimation = mod.renderAnimation
+      } catch {
+        console.error(
+          "Error: Animation requires Remotion. Install with:\n" +
+            "  pnpm add remotion @remotion/cli @remotion/bundler @remotion/renderer @remotion/paths react react-dom",
+        )
+        process.exit(1)
+      }
+
+      const result = await renderAnimation({
+        source,
+        outputPath: args.output,
+        animationMode: animate as "reveal" | "flow",
+        fps,
+        durationOverride,
+        theme,
+        width: width ?? 1920,
+        height: 1080,
+      })
+
+      if (!args.quiet) {
+        const ms = (performance.now() - start).toFixed(0)
+        console.error(
+          `Rendered ${ext.slice(1).toUpperCase()} in ${ms}ms → ${args.output}`,
+        )
+      }
+      return
+    }
+
+    // ─── Static output path (Phase 1) ───
+    const svg = await renderMermaid(source, { theme, width, backgroundColor: args.backgroundColor })
 
     switch (ext) {
       case ".svg": {
@@ -65,7 +138,7 @@ const render = defineCommand({
         break
       }
       default: {
-        console.error(`Error: unsupported output format "${ext}". Use .svg, .png, or .pdf`)
+        console.error(`Error: unsupported output format "${ext}". Use .svg, .png, .pdf, .gif, or .mp4`)
         process.exit(1)
       }
     }
@@ -105,8 +178,8 @@ const inspect = defineCommand({
 const main = defineCommand({
   meta: {
     name: "mermaid-cinema",
-    version: "0.1.0",
-    description: "Mermaid diagrams → SVG, PNG, PDF, GIF, MP4. No browser required.",
+    version: "0.2.0",
+    description: "Mermaid diagrams → SVG, PNG, PDF, GIF, MP4. No browser required for static output.",
   },
   subCommands: { render, inspect },
 })

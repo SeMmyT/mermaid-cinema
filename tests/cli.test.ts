@@ -76,4 +76,46 @@ describe("CLI render", () => {
       })
     }).toThrow()
   })
+
+  it("rejects .gif with --animate none", () => {
+    const dir = tmpDir()
+    const input = join(dir, "test.mmd")
+    const output = join(dir, "test.gif")
+    writeFileSync(input, "graph TD; A-->B;")
+
+    expect(() => {
+      execSync(`${CLI} render ${input} -o ${output} --animate none`, {
+        cwd: CWD,
+        stdio: "pipe",
+      })
+    }).toThrow()
+  })
+
+  it("rejects --animate reveal for .svg output", () => {
+    const dir = tmpDir()
+    const input = join(dir, "test.mmd")
+    const output = join(dir, "test.svg")
+    writeFileSync(input, "graph TD; A-->B;")
+
+    expect(() => {
+      execSync(`${CLI} render ${input} -o ${output} --animate reveal`, {
+        cwd: CWD,
+        stdio: "pipe",
+      })
+    }).toThrow()
+  })
+
+  it("rejects --animate flow for .png output", () => {
+    const dir = tmpDir()
+    const input = join(dir, "test.mmd")
+    const output = join(dir, "test.png")
+    writeFileSync(input, "graph TD; A-->B;")
+
+    expect(() => {
+      execSync(`${CLI} render ${input} -o ${output} --animate flow`, {
+        cwd: CWD,
+        stdio: "pipe",
+      })
+    }).toThrow()
+  })
 })
