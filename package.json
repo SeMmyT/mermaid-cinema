@@ -1,0 +1,32 @@
+{
+  "name": "mermaid-cinema",
+  "version": "0.1.0",
+  "description": "Mermaid diagrams to SVG, PNG, PDF, GIF, MP4. No browser required.",
+  "type": "module",
+  "bin": {
+    "mermaid-cinema": "./dist/cli.mjs"
+  },
+  "scripts": {
+    "build": "unbuild",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": ["mermaid", "diagram", "cli", "svg", "png", "animation"],
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "files": ["dist"],
+  "dependencies": {
+    "citty": "^0.2.1",
+    "linkedom": "^0.18.12",
+    "mermaid": "^11.13.0",
+    "@resvg/resvg-js": "^2.6.2",
+    "pdf-lib": "^1.17.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "tsx": "^4.0.0",
+    "unbuild": "^3.0.0",
+    "vitest": "^3.0.0"
+  }
+}
