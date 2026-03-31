@@ -8,6 +8,7 @@ import { pngToPdf } from "./export-pdf.js"
 
 const ANIMATED_EXTS = new Set([".gif", ".mp4", ".webm"])
 const STATIC_EXTS = new Set([".svg", ".png", ".pdf"])
+const ASVG_EXT = ".asvg"
 
 const render = defineCommand({
   meta: { name: "render", description: "Render a Mermaid diagram" },
@@ -22,8 +23,9 @@ const render = defineCommand({
     animate: {
       type: "string",
       alias: "a",
-      description: 'Animation mode: "none", "reveal", "flow" (default: auto from output format)',
+      description: 'Animation mode: "none", "reveal", "flow", "steps" (default: auto from output format)',
     },
+    steps: { type: "string", description: "Path to steps.yaml file for step-by-step animation" },
     fps: { type: "string", description: "Animation frames per second", default: "30" },
     duration: { type: "string", description: "Animation duration in seconds (overrides auto-calculation)" },
   },
@@ -56,15 +58,31 @@ const render = defineCommand({
 
     const ext = extname(args.output).toLowerCase()
 
-    // Determine animation mode
+    // If --steps provided, implicitly set animate to "steps"
     let animate = args.animate as string | undefined
+    if (args.steps && !animate) {
+      animate = "steps"
+    }
+
+    // Determine animation mode
     if (!animate) {
-      // Auto-detect: animated formats default to "reveal", static default to "none"
-      if (ANIMATED_EXTS.has(ext)) {
+      if (ANIMATED_EXTS.has(ext) || ext === ASVG_EXT) {
         animate = "reveal"
       } else {
         animate = "none"
       }
+    }
+
+    // Validate: steps mode requires --steps file
+    if (animate === "steps" && !args.steps) {
+      console.error("Error: --animate steps requires --steps <path> to a steps.yaml file.")
+      process.exit(1)
+    }
+
+    // Validate: steps mode only works with animated formats or .asvg
+    if (animate === "steps" && !ANIMATED_EXTS.has(ext) && ext !== ASVG_EXT) {
+      console.error(`Error: steps mode only works with .gif, .mp4, .webm, or .asvg output.`)
+      process.exit(1)
     }
 
     // Validate: GIF/MP4 require animation
@@ -75,17 +93,111 @@ const render = defineCommand({
       process.exit(1)
     }
 
-    // Validate: static formats don't support animation
+    // Validate: static formats don't support animation (except .asvg)
     if (STATIC_EXTS.has(ext) && animate !== "none") {
       console.error(
-        `Error: ${ext} output does not support animation. Use .gif or .mp4 for animated output.`,
+        `Error: ${ext} output does not support animation. Use .gif, .mp4, or .asvg for animated output.`,
       )
       process.exit(1)
     }
 
-    // ─── Animated output path ───
+    // ─── ASVG output path (SMIL animated SVG — no Remotion) ───
+    if (ext === ASVG_EXT) {
+      const svg = await renderMermaid(source, { theme, width, backgroundColor: args.backgroundColor })
+      const { inspectSvg } = await import("./inspect.js")
+      const diagram = inspectSvg(svg)
+      const { parseSteps, resolveSteps } = await import("./steps/parse-steps.js")
+      const { exportAnimatedSvg } = await import("./export-asvg.js")
+
+      if (animate === "steps" && args.steps) {
+        const stepsYaml = readFileSync(args.steps, "utf-8")
+        const stepsConfig = parseSteps(stepsYaml)
+        if (durationOverride) stepsConfig.duration = durationOverride
+        const resolved = resolveSteps(stepsConfig, diagram)
+
+        const asvg = exportAnimatedSvg({ svg, diagram, config: stepsConfig, resolvedSteps: resolved.steps })
+        writeFileSync(args.output, asvg, "utf-8")
+      } else {
+        // Auto-generate steps from diagram topology
+        const autoStepDefs = diagram.nodes.map((n) => ({
+          show: [n.id] as string[],
+          connect: [] as string[],
+          highlight: [] as string[],
+          label: "",
+          style: {} as Record<string, Record<string, string>>,
+        }))
+        if (autoStepDefs.length === 0) {
+          autoStepDefs.push({ show: [], connect: [], highlight: [], label: "", style: {} })
+        }
+        for (const edge of diagram.edges) {
+          const idx = autoStepDefs.findIndex((s) => s.show.includes(edge.target))
+          if (idx >= 0) autoStepDefs[idx].connect.push(`${edge.source}-->${edge.target}`)
+        }
+        const autoConfig = {
+          fps,
+          duration: durationOverride ?? ("auto" as const),
+          transition: "spring" as const,
+          steps: autoStepDefs,
+        }
+        const resolved = resolveSteps(autoConfig, diagram)
+        const asvg = exportAnimatedSvg({ svg, diagram, config: autoConfig, resolvedSteps: resolved.steps })
+        writeFileSync(args.output, asvg, "utf-8")
+      }
+
+      if (!args.quiet) {
+        const ms = (performance.now() - start).toFixed(0)
+        console.error(`Rendered ASVG in ${ms}ms → ${args.output}`)
+      }
+      return
+    }
+
+    // ─── Steps animation via Remotion (GIF/MP4 with --steps) ───
+    if (animate === "steps" && args.steps && ANIMATED_EXTS.has(ext)) {
+      const { inspectSvg } = await import("./inspect.js")
+      const { parseSteps, resolveSteps } = await import("./steps/parse-steps.js")
+
+      const svgForValidation = await renderMermaid(source, { theme, width, backgroundColor: args.backgroundColor })
+      const diagram = inspectSvg(svgForValidation)
+      const stepsYaml = readFileSync(args.steps, "utf-8")
+      const stepsConfig = parseSteps(stepsYaml)
+      resolveSteps(stepsConfig, diagram) // validates references
+
+      if (!args.quiet) {
+        console.error(`Steps: ${stepsConfig.steps.length} steps from ${args.steps}`)
+      }
+
+      let renderAnimation: typeof import("./animation/render-animation.js").renderAnimation
+      try {
+        const mod = await import("./animation/render-animation.js")
+        renderAnimation = mod.renderAnimation
+      } catch {
+        console.error(
+          "Error: Steps animation with video output requires Remotion.\n" +
+            "  Use .asvg output for zero-dependency animated SVG.",
+        )
+        process.exit(1)
+      }
+
+      await renderAnimation({
+        source,
+        outputPath: args.output,
+        animationMode: "reveal",
+        fps: stepsConfig.fps,
+        durationOverride: stepsConfig.duration === "auto" ? undefined : stepsConfig.duration,
+        theme,
+        width: width ?? 1920,
+        height: 1080,
+      })
+
+      if (!args.quiet) {
+        const ms = (performance.now() - start).toFixed(0)
+        console.error(`Rendered ${ext.slice(1).toUpperCase()} in ${ms}ms → ${args.output}`)
+      }
+      return
+    }
+
+    // ─── Animated output path (reveal/flow via Remotion) ───
     if (animate !== "none" && ANIMATED_EXTS.has(ext)) {
-      // Dynamic import to avoid loading Remotion for static renders
       let renderAnimation: typeof import("./animation/render-animation.js").renderAnimation
       try {
         const mod = await import("./animation/render-animation.js")
@@ -98,7 +210,7 @@ const render = defineCommand({
         process.exit(1)
       }
 
-      const result = await renderAnimation({
+      await renderAnimation({
         source,
         outputPath: args.output,
         animationMode: animate as "reveal" | "flow",
@@ -111,9 +223,7 @@ const render = defineCommand({
 
       if (!args.quiet) {
         const ms = (performance.now() - start).toFixed(0)
-        console.error(
-          `Rendered ${ext.slice(1).toUpperCase()} in ${ms}ms → ${args.output}`,
-        )
+        console.error(`Rendered ${ext.slice(1).toUpperCase()} in ${ms}ms → ${args.output}`)
       }
       return
     }
@@ -138,7 +248,7 @@ const render = defineCommand({
         break
       }
       default: {
-        console.error(`Error: unsupported output format "${ext}". Use .svg, .png, .pdf, .gif, or .mp4`)
+        console.error(`Error: unsupported output format "${ext}". Use .svg, .png, .pdf, .gif, .mp4, or .asvg`)
         process.exit(1)
       }
     }
@@ -175,13 +285,57 @@ const inspect = defineCommand({
   },
 })
 
+const mcp = defineCommand({
+  meta: { name: "mcp", description: "Start MCP server (stdio transport for Claude Code / Cursor)" },
+  args: {
+    port: {
+      type: "string",
+      description: "HTTP port (future, currently stubbed)",
+      required: false,
+    },
+  },
+  async run({ args }) {
+    if (args.port) {
+      console.error("HTTP transport not yet implemented. Use stdio (default).")
+      process.exit(1)
+    }
+    const { startStdioServer } = await import("./mcp/server.js")
+    await startStdioServer()
+  },
+})
+
+const serve = defineCommand({
+  meta: { name: "serve", description: "Start HTTP render server" },
+  args: {
+    port: {
+      type: "string",
+      alias: "p",
+      description: "Port to listen on",
+      default: "3000",
+    },
+    host: {
+      type: "string",
+      alias: "H",
+      description: "Host to bind to",
+      default: "127.0.0.1",
+    },
+  },
+  async run({ args }) {
+    const { startHttpServer } = await import("./serve.js")
+    await startHttpServer({
+      port: parseInt(args.port),
+      host: args.host,
+    })
+  },
+})
+
 const main = defineCommand({
   meta: {
     name: "mermaid-cinema",
     version: "0.2.0",
     description: "Mermaid diagrams → SVG, PNG, PDF, GIF, MP4. No browser required for static output.",
   },
-  subCommands: { render, inspect },
+  subCommands: { render, inspect, mcp, serve },
 })
 
 runMain(main)
