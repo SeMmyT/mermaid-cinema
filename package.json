@@ -1,6 +1,6 @@
 {
   "name": "mermaid-cinema",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Mermaid diagrams to SVG, PNG, PDF, GIF, MP4. No browser required for static output.",
   "type": "module",
   "bin": {
