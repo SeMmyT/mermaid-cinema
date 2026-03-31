@@ -12,20 +12,33 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "keywords": ["mermaid", "diagram", "cli", "svg", "png", "animation"],
+  "keywords": [
+    "mermaid",
+    "diagram",
+    "cli",
+    "svg",
+    "png",
+    "animation"
+  ],
   "license": "MIT",
-  "engines": { "node": ">=20" },
-  "files": ["dist"],
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist"
+  ],
   "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "citty": "^0.2.1",
+    "jsdom": "^29.0.1",
     "linkedom": "^0.18.12",
     "mermaid": "^11.13.0",
-    "@resvg/resvg-js": "^2.6.2",
     "pdf-lib": "^1.17.1"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
+    "@types/jsdom": "^28.0.1",
     "tsx": "^4.0.0",
+    "typescript": "^5.7.0",
     "unbuild": "^3.0.0",
     "vitest": "^3.0.0"
   }
