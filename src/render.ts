@@ -59,18 +59,38 @@ function ensureDom() {
   domReady = true
 }
 
+function estimateBBox(el: any) {
+  // Only use the element's OWN text, not children's text.
+  // For <text>/<tspan> elements, use their direct text content.
+  // For containers, estimate based on child count.
+  const tagName = (el.tagName || "").toLowerCase()
+  const fontSize = 16
+
+  if (tagName === "text" || tagName === "tspan") {
+    // Use direct text nodes only, not recursive textContent
+    let directText = ""
+    for (const node of el.childNodes || []) {
+      if (node.nodeType === 3) directText += node.textContent || "" // TEXT_NODE
+    }
+    if (!directText) directText = el.textContent || ""
+    const w = Math.max(directText.length * fontSize * 0.6, 20)
+    return { x: 0, y: 0, width: Math.min(w, 500), height: fontSize * 1.5 }
+  }
+
+  // For non-text SVG elements, return a compact default
+  const children = el.children?.length ?? 0
+  return {
+    x: 0,
+    y: 0,
+    width: Math.min(Math.max(children * 40, 50), 500),
+    height: Math.min(Math.max(children * 20, 30), 300),
+  }
+}
+
 function patchSvgElement(el: any) {
   if (!el.getBBox) {
     el.getBBox = function () {
-      // Estimate text bounding box from textContent
-      const text = el.textContent || ""
-      const fontSize = 14
-      return {
-        x: 0,
-        y: 0,
-        width: text.length * fontSize * 0.6,
-        height: fontSize * 1.4,
-      }
+      return estimateBBox(el)
     }
   }
   if (!el.getBoundingClientRect) {
@@ -81,7 +101,8 @@ function patchSvgElement(el: any) {
   }
   if (!el.getComputedTextLength) {
     el.getComputedTextLength = function () {
-      return (el.textContent || "").length * 14 * 0.6
+      const text = el.textContent || ""
+      return Math.min(text.length * 16 * 0.6, 500)
     }
   }
 }
@@ -92,19 +113,13 @@ function patchPrototypes(win: any) {
   if (SVGElement && SVGElement.prototype) {
     if (!SVGElement.prototype.getBBox) {
       SVGElement.prototype.getBBox = function () {
-        const text = this.textContent || ""
-        const fontSize = 14
-        return {
-          x: 0,
-          y: 0,
-          width: text.length * fontSize * 0.6,
-          height: fontSize * 1.4,
-        }
+        return estimateBBox(this)
       }
     }
     if (!SVGElement.prototype.getComputedTextLength) {
       SVGElement.prototype.getComputedTextLength = function () {
-        return (this.textContent || "").length * 14 * 0.6
+        const text = this.textContent || ""
+        return Math.min(text.length * 16 * 0.6, 500)
       }
     }
   }
@@ -113,14 +128,7 @@ function patchPrototypes(win: any) {
   const Element = win.Element
   if (Element && Element.prototype && !Element.prototype.getBBox) {
     Element.prototype.getBBox = function () {
-      const text = this.textContent || ""
-      const fontSize = 14
-      return {
-        x: 0,
-        y: 0,
-        width: text.length * fontSize * 0.6,
-        height: fontSize * 1.4,
-      }
+      return estimateBBox(this)
     }
   }
 }
